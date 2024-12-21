@@ -1,67 +1,93 @@
-name: build
+# GitHub Actions工作流配置文件
+
+name: Build and Release
+
 on:
-  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*.*.*" # 当推送符合模式v*.*.*的标签时触发工作流
+
 jobs:
   build:
-    name: build
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }} # 定义作业运行的操作系统
     strategy:
       matrix:
-        build: [linux, macos, windows]
-        include:
-          - build: linux
-            os: ubuntu-18.04
-            rust: nightly
-            target: x86_64-unknown-linux-musl
-            archive-name: sgf-render-linux.tar.gz
-          - build: macos
-            os: macos-latest
-            rust: nightly
-            target: x86_64-apple-darwin
-            archive-name: sgf-render-macos.tar.gz
-          - build: windows
-            os: windows-2019
-            rust: nightly-x86_64-msvc
-            target: x86_64-pc-windows-msvc
-            archive-name: sgf-render-windows.7z
-      fail-fast: false
+        os: [ubuntu-latest, windows-latest] # 定义操作系统矩阵
+        arch: [x86_64] # 定义架构矩阵
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2 # 检出仓库代码
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1 # 设置Rust工具链
         with:
-          toolchain: ${{ matrix.rust }}
-          profile: minimal
-          override: true
-          target: ${{ matrix.target }}
+          toolchain: stable # 使用稳定版Rust工具链
+          profile: minimal # 使用最小化配置文件
+          override: true # 覆盖任何现有的Rust工具链设置
 
-      - name: Build binary
-        run: cargo build --verbose --release --target ${{ matrix.target }}
+      - name: Build project
+        run: cargo build --release # 构建项目的发布版本
+
+      # 上传Linux x86_64平台的构建产物
+      - name: Upload artifact (Linux)
+        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@v2
+        with:
+          name: ubuntu-latest-heaven
+          path: target/release/heaven
+
+      # 上传Windows x86_64平台的构建产物
+      - name: Upload artifact (Windows)
+        if: matrix.os == 'windows-latest' && matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@v2
+        with:
+          name: windows-latest-heaven
+          path: target/release/heaven.exe
+
+  release:
+    runs-on: ubuntu-latest # 定义作业运行在Ubuntu系统上
+    needs: build # 依赖于build作业
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2 # 检出仓库代码
+
+      # 下载Linux x86_64平台的构建产物
+      - name: Download artifact (Linux-x86_64)
+        uses: actions/download-artifact@v2
+        with:
+          name: ubuntu-latest-heaven
+          path: artifacts/ubuntu
+
+
+      # 下载Windows x86_64平台的构建产物
+      - name: Download artifact (Windows-x86_64)
+        uses: actions/download-artifact@v2
+        with:
+          name: windows-latest-heaven
+          path: artifacts/windows
+
+
+      # 上传Linux x86_64平台的构建产物到发布页面
+      - name: Upload Linux x86_64 artifact
+        uses: actions/upload-release-asset@v1
         env:
-          RUST_BACKTRACE: 1
-
-      - name: Strip binary (linux and macos)
-        if: matrix.build == 'linux' || matrix.build == 'macos'
-        run: strip "target/${{ matrix.target }}/release/sgf-render"
-
-      - name: Build archive
-        shell: bash
-        run: |
-          mkdir archive
-          cp LICENSE README.md archive/
-          cd archive
-          if [ "${{ matrix.build }}" = "windows" ]; then
-            cp "../target/${{ matrix.target }}/release/sgf-render.exe" ./
-            7z a "${{ matrix.archive-name }}" LICENSE README.md sgf-render.exe
-          else
-            cp "../target/${{ matrix.target }}/release/sgf-render" ./
-            tar -czf "${{ matrix.archive-name }}" LICENSE README.md sgf-render
-          fi
-      - name: Upload archive
-        uses: actions/upload-artifact@v1
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }} # 使用GitHub令牌进行身份验证
         with:
-          name: ${{ matrix.archive-name }}
-          path: archive/${{ matrix.archive-name }}
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # 使用创建发布步骤生成的上传URL
+          asset_path: artifacts/ubuntu/heaven # 上传的文件路径
+          asset_name: heaven-linux-x86_64 # 上传的文件名
+          asset_content_type: application/octet-stream # 文件内容类型
+
+      # 上传Windows x86_64平台的构建产物到发布页面
+      - name: Upload Windows x86_64 artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }} # 使用GitHub令牌进行身份验证
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # 使用创建发布步骤生成的上传URL
+          asset_path: artifacts/windows/heaven.exe # 上传的文件路径
+          asset_name: heaven-windows-x86_64.exe # 上传的文件名
+          asset_content_type: application/octet-stream # 文件内容类型
+
